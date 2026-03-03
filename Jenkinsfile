@@ -1,7 +1,3 @@
-cd Multi-Maven-Build-K8s
-
-# Update Jenkinsfile with git safe directory fix
-cat > Jenkinsfile << 'EOF'
 pipeline {
   agent {
     kubernetes {
@@ -34,7 +30,7 @@ spec:
 
   parameters {
     choice(name: 'PROJECTS', choices: ['auto', 'all', 'project-a', 'project-b', 'project-c'], 
-           description: 'Projects to build (auto = only changed)')
+           description: 'Projects to build')
     booleanParam(name: 'SKIP_TESTS', defaultValue: false, description: 'Skip tests')
   }
 
@@ -51,11 +47,9 @@ spec:
           sh 'git config --global --add safe.directory "*"'
           def branch = env.BRANCH_NAME ?: sh(script: "git rev-parse --abbrev-ref HEAD", returnStdout: true).trim()
           env.CURRENT_BRANCH = branch
-          echo "═══════════════════════════════════════"
           echo "Time: ${timestamp}"
           echo "Branch: ${branch}"
           echo "Build: #${env.BUILD_NUMBER}"
-          echo "═══════════════════════════════════════"
         }
       }
     }
@@ -74,7 +68,7 @@ spec:
       }
     }
 
-    stage('Detect Changed Projects') {
+    stage('Detect Projects') {
       steps {
         script {
           if (params.PROJECTS == 'all') {
@@ -82,13 +76,12 @@ spec:
           } else {
             env.PROJECT_LIST = params.PROJECTS
           }
-          echo "Projects to build: ${env.PROJECT_LIST}"
+          echo "Projects: ${env.PROJECT_LIST}"
         }
       }
     }
 
     stage('Maven Build') {
-      when { expression { env.PROJECT_LIST != 'none' } }
       steps {
         script {
           def projects = env.PROJECT_LIST.split(' ') as List
@@ -102,14 +95,12 @@ spec:
                 -Dbuild.branch=${env.CURRENT_BRANCH} \
                 -Dbuild.number=${env.BUILD_NUMBER}
             """
-            echo "✓ ${proj} completed"
           }
         }
       }
     }
 
     stage('Archive') {
-      when { expression { env.PROJECT_LIST != 'none' } }
       steps {
         archiveArtifacts artifacts: '*/target/*.jar', fingerprint: true, allowEmptyArchive: true
       }
@@ -122,8 +113,3 @@ spec:
     always { deleteDir() }
   }
 }
-EOF
-
-git add Jenkinsfile
-git commit -m "fix: add git safe directory config"
-git push origin main
