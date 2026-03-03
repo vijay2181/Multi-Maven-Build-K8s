@@ -38,7 +38,11 @@ spec:
       steps {
         script {
           sh 'git config --global --add safe.directory "*"'
-          def branch = env.BRANCH_NAME ?: sh(script: "git rev-parse --abbrev-ref HEAD", returnStdout: true).trim()
+          
+          // Better branch detection for Jenkins
+          def branch = env.GIT_BRANCH ?: env.BRANCH_NAME ?: 'main'
+          branch = branch.replaceAll('origin/', '')  // Remove 'origin/' prefix
+          
           env.CURRENT_BRANCH = branch
           echo "=== BUILD INFO ==="
           echo "Branch: ${branch}"
