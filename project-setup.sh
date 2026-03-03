@@ -191,31 +191,6 @@ spec:
         }
       }
     }
-
-    stage('Archive Artifacts') {
-      when { expression { env.PROJECT_LIST != 'none' } }
-      steps {
-        archiveArtifacts artifacts: '*/target/*.jar', 
-                         fingerprint: true, 
-                         allowEmptyArchive: true
-        echo "✓ Artifacts archived"
-      }
-    }
-  }
-
-  post {
-    success { 
-      echo "✓ Build #${env.BUILD_NUMBER} succeeded for ${env.DEPLOY_ENV}" 
-    }
-    failure { 
-      echo "✗ Build #${env.BUILD_NUMBER} failed" 
-    }
-    aborted {
-      echo "⊘ Build #${env.BUILD_NUMBER} aborted - no changes"
-    }
-    always { 
-      cleanWs() 
-    }
   }
 }
 EOF
