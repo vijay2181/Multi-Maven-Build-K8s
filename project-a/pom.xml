@@ -57,6 +57,7 @@
         </configuration>
       </plugin>
 
+             
       <!-- Maven Surefire Plugin (Tests) -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
