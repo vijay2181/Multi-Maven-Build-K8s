@@ -171,7 +171,7 @@ Result: Builds project-a and project-c only
 
 ```
 your-repo/
-├── Jenkinsfile-Enhanced     # Use this pipeline
+├── Branch-Filtering/Jenkinsfile     # Use this pipeline
 ├── project-a/
 │   ├── pom.xml
 │   └── src/
