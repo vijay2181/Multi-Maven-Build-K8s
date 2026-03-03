@@ -44,9 +44,14 @@ spec:
       steps {
         script {
           def timestamp = new Date().format('yyyy-MM-dd HH:mm:ss')
+          
+          // Get branch name (works for both regular and multi-branch pipeline)
+          def branch = env.BRANCH_NAME ?: sh(script: "git rev-parse --abbrev-ref HEAD", returnStdout: true).trim()
+          env.CURRENT_BRANCH = branch
+          
           echo "═══════════════════════════════════════"
           echo "Time: ${timestamp}"
-          echo "Branch: ${env.BRANCH_NAME}"
+          echo "Branch: ${branch}"
           echo "Build: #${env.BUILD_NUMBER}"
           if (env.CHANGE_ID) {
             echo "PR: #${env.CHANGE_ID} → ${env.CHANGE_TARGET}"
@@ -59,7 +64,7 @@ spec:
     stage('Determine Environment') {
       steps {
         script {
-          def branch = env.BRANCH_NAME
+          def branch = env.CURRENT_BRANCH
           def environment = 'dev'
           
           if (branch == 'main') environment = 'prod'
@@ -86,6 +91,7 @@ spec:
                                returnStdout: true).trim().split('\n') as List
             }
           } catch (Exception e) {
+            echo "Could not detect changes, will use parameter selection"
             changedFiles = []
           }
           
@@ -134,7 +140,7 @@ spec:
               mvn -B -f ${proj}/pom.xml clean package assembly:single \
                 ${skipTests} \
                 -Dbuild.env=${env.DEPLOY_ENV} \
-                -Dbuild.branch=${env.BRANCH_NAME} \
+                -Dbuild.branch=${env.CURRENT_BRANCH} \
                 -Dbuild.number=${env.BUILD_NUMBER}
             """
             
@@ -165,8 +171,9 @@ spec:
     aborted {
       echo "⊘ Build #${env.BUILD_NUMBER} aborted - no changes"
     }
-    always { 
-      cleanWs() 
+    always {
+      // Manual cleanup instead of cleanWs()
+      deleteDir()
     }
   }
 }
