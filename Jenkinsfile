@@ -119,16 +119,6 @@ spec:
         }
       }
     }
-
-    stage('Archive Artifacts') {
-      when {
-        expression { env.SKIP_BUILD == 'false' }
-      }
-      steps {
-        archiveArtifacts artifacts: '*/target/*.jar', fingerprint: true, allowEmptyArchive: true
-        echo "✓ Artifacts archived"
-      }
-    }
   }
 
   post {
