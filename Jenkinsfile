@@ -120,19 +120,4 @@ spec:
       }
     }
   }
-
-  post {
-    success { 
-      script {
-        if (env.SKIP_BUILD == 'true') {
-          echo "✓ Build #${env.BUILD_NUMBER} - No changes to build"
-        } else {
-          echo "✓ Build #${env.BUILD_NUMBER} succeeded for ${env.DEPLOY_ENV}"
-          echo "✓ Built projects: ${env.BUILD_PROJECTS}"
-        }
-      }
-    }
-    failure { echo "✗ Build #${env.BUILD_NUMBER} failed" }
-    always { deleteDir() }
-  }
 }
