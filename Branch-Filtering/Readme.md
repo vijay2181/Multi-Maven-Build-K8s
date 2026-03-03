@@ -503,3 +503,114 @@ curl -X POST http://your-jenkins-url/github-webhook/
 |---------|--------|-----------|-------------|--------|
 | Webhook | feature/* | - | - | ✅ Auto-build (changed projects) |
 | Webhook | main | - | - | ❌ Aborted |
+
+
+
+
+```bash
+Enhanced Jenkinsfile Explanation
+🎯 Key New Features Added
+1. Branch Filtering (Auto-Build Control)
+Problem Solved: Webhooks should NOT auto-trigger builds for main, develop, and release branches.
+
+Solution:
+
+Restricted Branches: main, master, develop, release/*, hotfix/*
+Allowed Auto-Build: feature/*, bugfix/*, and other branches
+Stage: "Branch Validation" checks if branch is restricted
+If restricted + auto-triggered → Build ABORTED with message
+If restricted + manual build → Build ALLOWED
+Example:
+
+Push to feature/new-api → ✅ Auto-builds
+Push to main → ❌ Aborted (use manual build)
+Push to release/v1.0 → ❌ Aborted (use manual build)
+
+2. Build with Parameters (Manual Project Selection)
+Problem Solved: Users should manually select which projects to build.
+
+New Parameters:
+
+BUILD_MODE: Choose auto (changed only), all (all projects), or custom (select specific)
+BUILD_PROJECT_A/B/C: Checkboxes to select individual projects (custom mode)
+FORCE_BUILD: Override branch restrictions for manual builds
+Usage:
+
+Manual Build → Build with Parameters
+├─ BUILD_MODE: custom
+├─ ✅ BUILD_PROJECT_A
+├─ ✅ BUILD_PROJECT_C
+└─ Build → Only project-a and project-c built
+
+3. Smart Build Detection
+Detects:
+
+Manual vs Webhook trigger
+Which projects changed (git diff)
+Branch restrictions
+Custom selections
+Logic:
+
+IF manual + custom mode → Build selected projects
+IF manual + all mode → Build all projects
+IF auto mode → Build only changed projects
+IF restricted branch + webhook → ABORT
+IF restricted branch + manual → ALLOW
+
+📊 Workflow Examples
+Scenario 1: Feature Branch (Auto-Build Enabled)
+git checkout -b feature/new-api
+# Make changes to project-a
+git commit -am "Add new API"
+git push origin feature/new-api
+
+Result: ✅ Webhook triggers → Auto-builds project-a with dev environment
+
+Scenario 2: Main Branch (Auto-Build Disabled)
+git checkout main
+# Make changes
+git commit -am "Update config"
+git push origin main
+
+Result: ❌ Webhook triggers → Build ABORTED with message:
+
+⚠️ Auto-build DISABLED for branch: main
+ℹ️ This branch requires manual 'Build with Parameters'
+
+Scenario 3: Manual Build on Main
+Jenkins → Job → Build with Parameters
+├─ BUILD_MODE: all
+├─ FORCE_BUILD: ✅
+└─ Build
+
+Result: ✅ Builds all projects for prod environment
+
+Scenario 4: Custom Project Selection
+Jenkins → Job → Build with Parameters
+├─ BUILD_MODE: custom
+├─ BUILD_PROJECT_A: ✅
+├─ BUILD_PROJECT_C: ✅
+└─ Build
+
+Result: ✅ Builds only project-a and project-c
+
+🔧 Configuration Summary
+Branch Restrictions:
+
+main, master, develop → Manual only
+release/*, hotfix/* → Manual only
+feature/*, bugfix/* → Auto-build enabled
+Environment Mapping:
+
+main/master → prod
+develop → dev
+release/* → qa
+hotfix/* → prod
+feature/* → dev
+Build Modes:
+
+auto → Changed projects only
+all → All projects
+custom → User-selected projects
+This solves all requirements: webhook filtering, manual project selection, and branch-based build control!
+```
