@@ -35,7 +35,6 @@ spec:
   }
 
   options {
-    timestamps()
     buildDiscarder(logRotator(numToKeepStr: '10'))
     timeout(time: 30, unit: 'MINUTES')
   }
@@ -44,7 +43,9 @@ spec:
     stage('Initialize') {
       steps {
         script {
+          def timestamp = new Date().format('yyyy-MM-dd HH:mm:ss')
           echo "═══════════════════════════════════════"
+          echo "Time: ${timestamp}"
           echo "Branch: ${env.BRANCH_NAME}"
           echo "Build: #${env.BUILD_NUMBER}"
           if (env.CHANGE_ID) {
