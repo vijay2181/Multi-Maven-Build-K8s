@@ -29,9 +29,9 @@ spec:
   }
 
   parameters {
-    choice(name: 'PROJECTS', choices: ['auto', 'all', 'project-a', 'project-b', 'project-c'], 
+    choice(name: 'PROJECTS', choices: ['all', 'project-a', 'project-b', 'project-c'], 
            description: 'Projects to build')
-    booleanParam(name: 'SKIP_TESTS', defaultValue: false, description: 'Skip tests')
+    booleanParam(name: 'SKIP_TESTS', defaultValue: true, description: 'Skip tests')
   }
 
   options {
@@ -43,11 +43,9 @@ spec:
     stage('Initialize') {
       steps {
         script {
-          def timestamp = new Date().format('yyyy-MM-dd HH:mm:ss')
           sh 'git config --global --add safe.directory "*"'
           def branch = env.BRANCH_NAME ?: sh(script: "git rev-parse --abbrev-ref HEAD", returnStdout: true).trim()
           env.CURRENT_BRANCH = branch
-          echo "Time: ${timestamp}"
           echo "Branch: ${branch}"
           echo "Build: #${env.BUILD_NUMBER}"
         }
@@ -68,26 +66,20 @@ spec:
       }
     }
 
-    stage('Detect Projects') {
-      steps {
-        script {
-          if (params.PROJECTS == 'all') {
-            env.PROJECT_LIST = 'project-a project-b project-c'
-          } else {
-            env.PROJECT_LIST = params.PROJECTS
-          }
-          echo "Projects: ${env.PROJECT_LIST}"
-        }
-      }
-    }
-
     stage('Maven Build') {
       steps {
         script {
-          def projects = env.PROJECT_LIST.split(' ') as List
+          def projects = []
+          if (params.PROJECTS == 'all') {
+            projects = ['project-a', 'project-b', 'project-c']
+          } else {
+            projects = [params.PROJECTS]
+          }
+          
           def skipTests = params.SKIP_TESTS ? '-DskipTests' : ''
+          
           for (proj in projects) {
-            echo "Building ${proj}..."
+            echo "Building ${proj} for ${env.DEPLOY_ENV}..."
             sh """
               mvn -B -f ${proj}/pom.xml clean package assembly:single \
                 ${skipTests} \
@@ -95,6 +87,7 @@ spec:
                 -Dbuild.branch=${env.CURRENT_BRANCH} \
                 -Dbuild.number=${env.BUILD_NUMBER}
             """
+            echo "✓ ${proj} completed"
           }
         }
       }
@@ -103,13 +96,14 @@ spec:
     stage('Archive') {
       steps {
         archiveArtifacts artifacts: '*/target/*.jar', fingerprint: true, allowEmptyArchive: true
+        echo "✓ Artifacts archived"
       }
     }
   }
 
   post {
-    success { echo "✓ Build succeeded" }
-    failure { echo "✗ Build failed" }
+    success { echo "✓ Build #${env.BUILD_NUMBER} succeeded for ${env.DEPLOY_ENV}" }
+    failure { echo "✗ Build #${env.BUILD_NUMBER} failed" }
     always { deleteDir() }
   }
 }
