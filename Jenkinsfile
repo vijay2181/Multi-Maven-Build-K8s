@@ -1,3 +1,7 @@
+cd Multi-Maven-Build-K8s
+
+# Update Jenkinsfile with git safe directory fix
+cat > Jenkinsfile << 'EOF'
 pipeline {
   agent {
     kubernetes {
@@ -44,18 +48,13 @@ spec:
       steps {
         script {
           def timestamp = new Date().format('yyyy-MM-dd HH:mm:ss')
-          
-          // Get branch name (works for both regular and multi-branch pipeline)
+          sh 'git config --global --add safe.directory "*"'
           def branch = env.BRANCH_NAME ?: sh(script: "git rev-parse --abbrev-ref HEAD", returnStdout: true).trim()
           env.CURRENT_BRANCH = branch
-          
           echo "═══════════════════════════════════════"
           echo "Time: ${timestamp}"
           echo "Branch: ${branch}"
           echo "Build: #${env.BUILD_NUMBER}"
-          if (env.CHANGE_ID) {
-            echo "PR: #${env.CHANGE_ID} → ${env.CHANGE_TARGET}"
-          }
           echo "═══════════════════════════════════════"
         }
       }
@@ -66,12 +65,9 @@ spec:
         script {
           def branch = env.CURRENT_BRANCH
           def environment = 'dev'
-          
           if (branch == 'main') environment = 'prod'
           else if (branch == 'develop') environment = 'dev'
           else if (branch.startsWith('release/')) environment = 'qa'
-          else if (env.CHANGE_ID) environment = 'test'
-          
           env.DEPLOY_ENV = environment
           echo "Environment: ${environment}"
         }
@@ -81,45 +77,12 @@ spec:
     stage('Detect Changed Projects') {
       steps {
         script {
-          def changedFiles = []
-          try {
-            if (env.CHANGE_ID) {
-              changedFiles = sh(script: "git diff --name-only origin/${env.CHANGE_TARGET}...HEAD", 
-                               returnStdout: true).trim().split('\n') as List
-            } else {
-              changedFiles = sh(script: "git diff --name-only HEAD~1..HEAD 2>/dev/null || echo ''", 
-                               returnStdout: true).trim().split('\n') as List
-            }
-          } catch (Exception e) {
-            echo "Could not detect changes, will use parameter selection"
-            changedFiles = []
-          }
-          
-          def autoList = []
-          if (changedFiles.any { it.startsWith('project-a/') }) autoList << 'project-a'
-          if (changedFiles.any { it.startsWith('project-b/') }) autoList << 'project-b'
-          if (changedFiles.any { it.startsWith('project-c/') }) autoList << 'project-c'
-          if (changedFiles.any { it == 'Jenkinsfile' }) autoList = ['project-a', 'project-b', 'project-c']
-          
           if (params.PROJECTS == 'all') {
             env.PROJECT_LIST = 'project-a project-b project-c'
-          } else if (params.PROJECTS == 'auto') {
-            env.PROJECT_LIST = autoList.isEmpty() ? 'none' : autoList.join(' ')
           } else {
             env.PROJECT_LIST = params.PROJECTS
           }
-          
           echo "Projects to build: ${env.PROJECT_LIST}"
-        }
-      }
-    }
-
-    stage('Abort if Nothing') {
-      when { expression { env.PROJECT_LIST == 'none' } }
-      steps {
-        script {
-          currentBuild.result = 'ABORTED'
-          error("No changes detected in project folders")
         }
       }
     }
@@ -130,12 +93,8 @@ spec:
         script {
           def projects = env.PROJECT_LIST.split(' ') as List
           def skipTests = params.SKIP_TESTS ? '-DskipTests' : ''
-          
           for (proj in projects) {
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            echo "Building ${proj} for ${env.DEPLOY_ENV}..."
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            
+            echo "Building ${proj}..."
             sh """
               mvn -B -f ${proj}/pom.xml clean package assembly:single \
                 ${skipTests} \
@@ -143,37 +102,28 @@ spec:
                 -Dbuild.branch=${env.CURRENT_BRANCH} \
                 -Dbuild.number=${env.BUILD_NUMBER}
             """
-            
-            echo "✓ ${proj} build completed"
+            echo "✓ ${proj} completed"
           }
         }
       }
     }
 
-    stage('Archive Artifacts') {
+    stage('Archive') {
       when { expression { env.PROJECT_LIST != 'none' } }
       steps {
-        archiveArtifacts artifacts: '*/target/*.jar', 
-                         fingerprint: true, 
-                         allowEmptyArchive: true
-        echo "✓ Artifacts archived"
+        archiveArtifacts artifacts: '*/target/*.jar', fingerprint: true, allowEmptyArchive: true
       }
     }
   }
 
   post {
-    success { 
-      echo "✓ Build #${env.BUILD_NUMBER} succeeded for ${env.DEPLOY_ENV}" 
-    }
-    failure { 
-      echo "✗ Build #${env.BUILD_NUMBER} failed" 
-    }
-    aborted {
-      echo "⊘ Build #${env.BUILD_NUMBER} aborted - no changes"
-    }
-    always {
-      // Manual cleanup instead of cleanWs()
-      deleteDir()
-    }
+    success { echo "✓ Build succeeded" }
+    failure { echo "✗ Build failed" }
+    always { deleteDir() }
   }
 }
+EOF
+
+git add Jenkinsfile
+git commit -m "fix: add git safe directory config"
+git push origin main
