@@ -1,0 +1,312 @@
+pipeline {
+  agent {
+    kubernetes {
+      yaml """
+apiVersion: v1
+kind: Pod
+spec:
+  containers:
+  - name: maven
+    image: maven:3.9-eclipse-temurin-17
+    command: ['cat']
+    tty: true
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "250m"
+      limits:
+        memory: "1Gi"
+        cpu: "500m"
+    volumeMounts:
+    - name: maven-cache
+      mountPath: /root/.m2
+  volumes:
+  - name: maven-cache
+    emptyDir: {}
+"""
+      defaultContainer 'maven'
+    }
+  }
+
+  // Build parameters for manual builds
+  parameters {
+    choice(
+      name: 'BUILD_MODE',
+      choices: ['auto', 'all', 'custom'],
+      description: 'Build mode: auto (changed projects), all (all projects), custom (select specific)'
+    )
+    booleanParam(
+      name: 'BUILD_PROJECT_A',
+      defaultValue: false,
+      description: 'Build project-a (only for custom mode)'
+    )
+    booleanParam(
+      name: 'BUILD_PROJECT_B',
+      defaultValue: false,
+      description: 'Build project-b (only for custom mode)'
+    )
+    booleanParam(
+      name: 'BUILD_PROJECT_C',
+      defaultValue: false,
+      description: 'Build project-c (only for custom mode)'
+    )
+    booleanParam(
+      name: 'FORCE_BUILD',
+      defaultValue: false,
+      description: 'Force build even if branch is restricted (for manual builds only)'
+    )
+  }
+
+  options {
+    buildDiscarder(logRotator(numToKeepStr: '10'))
+    timeout(time: 30, unit: 'MINUTES')
+    timestamps()
+  }
+
+  stages {
+    stage('Initialize') {
+      steps {
+        script {
+          sh 'git config --global --add safe.directory "*"'
+          
+          // Better branch detection for Jenkins
+          def branch = env.GIT_BRANCH ?: env.BRANCH_NAME ?: 'main'
+          branch = branch.replaceAll('origin/', '')  // Remove 'origin/' prefix
+          
+          env.CURRENT_BRANCH = branch
+          env.IS_MANUAL_BUILD = currentBuild.getBuildCauses('hudson.model.Cause$UserIdCause').size() > 0 ? 'true' : 'false'
+          
+          echo "=== BUILD INFO ==="
+          echo "Branch: ${branch}"
+          echo "Build: #${env.BUILD_NUMBER}"
+          echo "Triggered by: ${env.IS_MANUAL_BUILD == 'true' ? 'Manual' : 'Webhook/SCM'}"
+          echo "=================="
+        }
+      }
+    }
+
+    stage('Branch Validation') {
+      steps {
+        script {
+          def branch = env.CURRENT_BRANCH
+          def isManual = env.IS_MANUAL_BUILD == 'true'
+          def forceEnabled = params.FORCE_BUILD
+          
+          // Define restricted branches (auto-build disabled)
+          def restrictedBranches = ['main', 'master', 'develop']
+          def restrictedPrefixes = ['release/', 'hotfix/']
+          
+          // Check if branch is restricted
+          def isRestricted = restrictedBranches.contains(branch) || 
+                            restrictedPrefixes.any { branch.startsWith(it) }
+          
+          env.BRANCH_RESTRICTED = isRestricted ? 'true' : 'false'
+          
+          echo "=== BRANCH VALIDATION ==="
+          echo "Branch: ${branch}"
+          echo "Is Restricted: ${isRestricted}"
+          echo "Is Manual Build: ${isManual}"
+          echo "Force Build: ${forceEnabled}"
+          echo "========================"
+          
+          // Skip auto-builds for restricted branches
+          if (isRestricted && !isManual && !forceEnabled) {
+            echo "⚠️  Auto-build DISABLED for branch: ${branch}"
+            echo "ℹ️  This branch requires manual 'Build with Parameters'"
+            echo "ℹ️  Allowed auto-build branches: feature/*, bugfix/*, etc."
+            currentBuild.result = 'ABORTED'
+            error("Auto-build not allowed for ${branch}. Use 'Build with Parameters' for manual builds.")
+          }
+          
+          if (isRestricted && isManual) {
+            echo "✓ Manual build allowed for restricted branch: ${branch}"
+          }
+          
+          if (!isRestricted) {
+            echo "✓ Auto-build enabled for feature branch: ${branch}"
+          }
+        }
+      }
+    }
+
+    stage('Detect Environment') {
+      steps {
+        script {
+          def branch = env.CURRENT_BRANCH
+          def environment = 'dev'
+          
+          if (branch == 'main' || branch == 'master') {
+            environment = 'prod'
+          } else if (branch == 'develop') {
+            environment = 'dev'
+          } else if (branch.startsWith('release/')) {
+            environment = 'qa'
+          } else if (branch.startsWith('hotfix/')) {
+            environment = 'prod'
+          } else if (branch.startsWith('feature/')) {
+            environment = 'dev'
+          } else if (branch.startsWith('bugfix/')) {
+            environment = 'dev'
+          }
+          
+          env.DEPLOY_ENV = environment
+          echo "=== ENVIRONMENT ==="
+          echo "Detected: ${environment}"
+          echo "==================="
+        }
+      }
+    }
+
+    stage('Determine Projects to Build') {
+      steps {
+        script {
+          def projects = []
+          def buildMode = params.BUILD_MODE
+          def isManual = env.IS_MANUAL_BUILD == 'true'
+          
+          echo "=== BUILD MODE ==="
+          echo "Mode: ${buildMode}"
+          echo "Manual: ${isManual}"
+          echo "=================="
+          
+          if (isManual && buildMode == 'custom') {
+            // Manual build with custom project selection
+            if (params.BUILD_PROJECT_A) projects << 'project-a'
+            if (params.BUILD_PROJECT_B) projects << 'project-b'
+            if (params.BUILD_PROJECT_C) projects << 'project-c'
+            
+            if (projects.isEmpty()) {
+              echo "⚠️  No projects selected in custom mode"
+              currentBuild.result = 'ABORTED'
+              error("Please select at least one project to build")
+            }
+            
+            echo "Custom build - Selected projects: ${projects.join(', ')}"
+            
+          } else if (isManual && buildMode == 'all') {
+            // Manual build - all projects
+            projects = ['project-a', 'project-b', 'project-c']
+            echo "Manual build - Building all projects"
+            
+          } else {
+            // Auto mode - detect changed projects
+            def changedFiles = sh(
+              script: "git diff --name-only HEAD~1 HEAD 2>/dev/null || echo 'ALL'",
+              returnStdout: true
+            ).trim()
+            
+            if (changedFiles == 'ALL' || changedFiles == '') {
+              projects = ['project-a', 'project-b', 'project-c']
+              echo "First build or no changes detected - building all projects"
+            } else {
+              if (changedFiles.contains('project-a/')) projects << 'project-a'
+              if (changedFiles.contains('project-b/')) projects << 'project-b'
+              if (changedFiles.contains('project-c/')) projects << 'project-c'
+              
+              if (changedFiles.contains('Jenkinsfile')) {
+                projects = ['project-a', 'project-b', 'project-c']
+                echo "Jenkinsfile changed - building all projects"
+              }
+            }
+          }
+          
+          if (projects.isEmpty()) {
+            echo "⚠️  No project changes detected - skipping build"
+            env.SKIP_BUILD = 'true'
+            env.BUILD_PROJECTS = ''
+          } else {
+            env.SKIP_BUILD = 'false'
+            env.BUILD_PROJECTS = projects.join(',')
+            echo "=== PROJECTS TO BUILD ==="
+            projects.each { proj ->
+              echo "  ✓ ${proj}"
+            }
+            echo "========================="
+          }
+        }
+      }
+    }
+
+    stage('Maven Build') {
+      when {
+        expression { env.SKIP_BUILD == 'false' }
+      }
+      steps {
+        script {
+          def projects = env.BUILD_PROJECTS.split(',')
+          def buildEnv = env.DEPLOY_ENV
+          def branch = env.CURRENT_BRANCH
+          def buildNum = env.BUILD_NUMBER
+          
+          for (proj in projects) {
+            echo "=== Building ${proj} ==="
+            echo "Environment: ${buildEnv}"
+            echo "Branch: ${branch}"
+            echo "Build: #${buildNum}"
+            
+            sh """
+              mvn -B -f ${proj}/pom.xml clean package assembly:single \
+                -DskipTests \
+                -Dbuild.env=${buildEnv} \
+                -Dbuild.branch=${branch} \
+                -Dbuild.number=${buildNum}
+            """
+            
+            echo "✓ ${proj} completed successfully"
+            echo ""
+          }
+        }
+      }
+    }
+
+    stage('Archive Artifacts') {
+      when {
+        expression { env.SKIP_BUILD == 'false' }
+      }
+      steps {
+        script {
+          echo "=== Archiving Artifacts ==="
+          archiveArtifacts artifacts: '*/target/*.jar', 
+                          fingerprint: true, 
+                          allowEmptyArchive: true
+          echo "✓ Artifacts archived"
+        }
+      }
+    }
+  }
+
+  post {
+    success {
+      script {
+        echo "=== BUILD SUCCESS ==="
+        echo "Branch: ${env.CURRENT_BRANCH}"
+        echo "Environment: ${env.DEPLOY_ENV}"
+        if (env.BUILD_PROJECTS) {
+          echo "Projects: ${env.BUILD_PROJECTS}"
+        }
+        echo "===================="
+      }
+    }
+    failure {
+      script {
+        echo "=== BUILD FAILED ==="
+        echo "Branch: ${env.CURRENT_BRANCH}"
+        echo "Check console output for details"
+        echo "===================="
+      }
+    }
+    aborted {
+      script {
+        echo "=== BUILD ABORTED ==="
+        if (env.BRANCH_RESTRICTED == 'true' && env.IS_MANUAL_BUILD == 'false') {
+          echo "Reason: Auto-build disabled for ${env.CURRENT_BRANCH}"
+          echo "Use 'Build with Parameters' for manual builds"
+        }
+        echo "===================="
+      }
+    }
+    always {
+      cleanWs()
+    }
+  }
+}
